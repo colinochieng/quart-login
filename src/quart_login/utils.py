@@ -120,7 +120,7 @@ def expand_login_view(login_view):
         if context.view_args and url_rule:
             args = {}
             for key in _rule_re.findall(url_rule):
-                if key not in context.view_args:
+                if not key or key not in context.view_args:
                     continue
                 args[key] = context.view_args[key]
             return url_for(login_view, **args)
@@ -158,7 +158,7 @@ def login_url(login_view, next_url=None, next_field="next"):
     md[next_field] = make_next_param(base, next_url)
     netloc = current_app.config.get("FORCE_HOST_FOR_REDIRECTS") or parsed_result.netloc
     parsed_result = parsed_result._replace(
-        netloc=netloc, query=urlencode(sorted(md.items()))
+        netloc=netloc, query=urlencode(sorted(md.items(), key=lambda x: x[0]))
     )
     return urlunparse(parsed_result)
 
