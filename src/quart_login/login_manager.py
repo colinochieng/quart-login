@@ -1,19 +1,19 @@
+import asyncio
 import warnings
 from datetime import datetime
 from datetime import timedelta
+from datetime import timezone
 
-from quart import _request_ctx_stack
 from quart import has_request_context
-from quart import _websocket_ctx_stack
 from quart import has_websocket_context
 from quart import abort
 from quart import current_app
+from quart import flash
 from quart import has_app_context
 from quart import redirect
 from quart import session
-
-import quart.flask_patch  # must be the first import to use flask extensions with quart
-from flask import flash
+from quart.globals import _cv_request
+from quart.globals import _cv_websocket
 
 from .config import AUTH_HEADER_NAME
 from .config import COOKIE_DURATION
@@ -141,7 +141,7 @@ class LoginManager:
         if add_context_processor:
             app.context_processor(_user_context_processor)
 
-    def unauthorized(self):
+    async def unauthorized(self):
         """
         This is called when the user is required to log in. If you register a
         callback with :meth:`LoginManager.unauthorized_handler`, then it will
@@ -169,7 +169,10 @@ class LoginManager:
         user_unauthorized.send(current_app._get_current_object())
 
         if self.unauthorized_callback:
-            return self.unauthorized_callback()
+            result = self.unauthorized_callback()
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
 
         context = get_context()
 
@@ -183,12 +186,12 @@ class LoginManager:
 
         if self.login_message:
             if self.localize_callback is not None:
-                flash(
+                await flash(
                     self.localize_callback(self.login_message),
                     category=self.login_message_category,
                 )
             else:
-                flash(self.login_message, category=self.login_message_category)
+                await flash(self.login_message, category=self.login_message_category)
 
         config = current_app.config
         if config.get("USE_SESSION_FOR_NEXT", USE_SESSION_FOR_NEXT):
@@ -261,7 +264,7 @@ class LoginManager:
         self.needs_refresh_callback = callback
         return callback
 
-    def needs_refresh(self):
+    async def needs_refresh(self):
         """
         This is called when the user is logged in, but they need to be
         reauthenticated because their session is stale. If you register a
@@ -284,19 +287,22 @@ class LoginManager:
         user_needs_refresh.send(current_app._get_current_object())
 
         if self.needs_refresh_callback:
-            return self.needs_refresh_callback()
+            result = self.needs_refresh_callback()
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
 
         if not self.refresh_view:
             abort(401)
 
         if self.needs_refresh_message:
             if self.localize_callback is not None:
-                flash(
+                await flash(
                     self.localize_callback(self.needs_refresh_message),
                     category=self.needs_refresh_message_category,
                 )
             else:
-                flash(
+                await flash(
                     self.needs_refresh_message,
                     category=self.needs_refresh_message_category,
                 )
@@ -338,9 +344,9 @@ class LoginManager:
         """Store the given user as ctx.user."""
 
         if has_request_context():
-            ctx = _request_ctx_stack.top
+            ctx = _cv_request.get()
         elif has_websocket_context():
-            ctx = _websocket_ctx_stack.top
+            ctx = _cv_websocket.get()
         ctx.user = self.anonymous_user() if user is None else user
 
     def _load_user(self):
@@ -389,7 +395,7 @@ class LoginManager:
         return self._update_request_context_with_user(user)
 
     def _session_protection_failed(self):
-        sess = session._get_current_object()
+        sess = session
         ident = self._session_identifier_generator()
 
         app = current_app._get_current_object()
@@ -488,7 +494,7 @@ class LoginManager:
             duration = timedelta(seconds=duration)
 
         try:
-            expires = datetime.utcnow() + duration
+            expires = datetime.now(timezone.utc) + duration
         except TypeError as e:
             raise Exception(
                 "REMEMBER_COOKIE_DURATION must be a datetime.timedelta,"
