@@ -96,9 +96,6 @@ def make_next_param(login_url, current_url):
     return current_url
 
 
-_rule_re = re.compile(r"<(?:[^:>]+:)?([^>]+)>")
-
-
 def expand_login_view(login_view):
     """
     Returns the url for the login view, expanding the view name to a url if
@@ -110,6 +107,7 @@ def expand_login_view(login_view):
     if login_view.startswith(("https://", "http://", "/")):
         return login_view
     else:
+        _rule_re = re.compile(r"<(?:[^:>]+:)?([^>]+)>")
 
         context = get_context()
 
