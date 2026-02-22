@@ -3,7 +3,7 @@ import sys
 import unittest
 from collections.abc import Hashable
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import ANY, Mock, patch
 
 from quart import Blueprint
@@ -277,7 +277,7 @@ class LoginTestCase(unittest.IsolatedAsyncioTestCase):
 
         @self.app.route("/secret")
         async def secret():
-            return self.login_manager.unauthorized()
+            return await self.login_manager.unauthorized()
 
         @self.app.route("/login-notch")
         async def login_notch():
@@ -299,7 +299,7 @@ class LoginTestCase(unittest.IsolatedAsyncioTestCase):
 
         @self.app.route("/needs-refresh")
         async def needs_refresh():
-            return self.login_manager.needs_refresh()
+            return await self.login_manager.needs_refresh()
 
         @self.app.route("/confirm-login")
         async def _confirm_login():
@@ -897,11 +897,11 @@ class LoginTestCase(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(expiration_date_1, expiration_date_2)
 
-        # With refresh (mock datetime's `utcnow`)
+        # With refresh (mock datetime's `now`)
         with patch("quart_login.login_manager.datetime") as mock_dt:
             self.app.config["REMEMBER_COOKIE_REFRESH_EACH_REQUEST"] = True
-            now = datetime.utcnow()
-            mock_dt.utcnow = Mock(return_value=now)
+            now = datetime.now(timezone.utc)
+            mock_dt.now = Mock(return_value=now)
 
             async with self.app.test_client() as c:
                 await c.get("/login-notch-remember")
@@ -913,7 +913,7 @@ class LoginTestCase(unittest.IsolatedAsyncioTestCase):
 
                 await self._delete_session(c)
 
-                mock_dt.utcnow = Mock(return_value=now + timedelta(seconds=1))
+                mock_dt.now = Mock(return_value=now + timedelta(seconds=1))
                 await c.get("/username")
                 self.assertIn("remember", c.cookie_jar._cookies[domain][path])
                 expiration_date_2 = datetime.utcfromtimestamp(
@@ -1788,7 +1788,7 @@ class StrictHostForRedirectsTestCase(unittest.IsolatedAsyncioTestCase):
 
         @self.app.route("/secret")
         async def secret():
-            return self.login_manager.unauthorized()
+            return await self.login_manager.unauthorized()
 
         @self.app.route("/")
         async def index():

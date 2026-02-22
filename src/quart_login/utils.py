@@ -1,22 +1,23 @@
+import asyncio
 import hmac
+import re
 from functools import wraps
 from hashlib import sha512
 from urllib.parse import urlparse
 from urllib.parse import urlunparse
+from urllib.parse import parse_qsl
+from urllib.parse import urlencode
 
 from quart import current_app
-from quart import _request_ctx_stack
 from quart import has_request_context
 from quart import request
-from quart import _websocket_ctx_stack
 from quart import has_websocket_context
 from quart import websocket
 from quart import session
 from quart import url_for
+from quart.globals import _cv_request
+from quart.globals import _cv_websocket
 from werkzeug.local import LocalProxy
-from werkzeug.routing import parse_rule
-from werkzeug.urls import url_decode
-from werkzeug.urls import url_encode
 
 from .config import COOKIE_NAME
 from .config import EXEMPT_METHODS
@@ -95,6 +96,9 @@ def make_next_param(login_url, current_url):
     return current_url
 
 
+_rule_re = re.compile(r"<(?:[^:>]+:)?([^>]+)>")
+
+
 def expand_login_view(login_view):
     """
     Returns the url for the login view, expanding the view name to a url if
@@ -115,7 +119,7 @@ def expand_login_view(login_view):
             url_rule = None
         if context.view_args and url_rule:
             args = {}
-            for _, _, key in parse_rule(url_rule):
+            for key in _rule_re.findall(url_rule):
                 if not key or key not in context.view_args:
                     continue
                 args[key] = context.view_args[key]
@@ -150,11 +154,11 @@ def login_url(login_view, next_url=None, next_field="next"):
         return base
 
     parsed_result = urlparse(base)
-    md = url_decode(parsed_result.query)
+    md = dict(parse_qsl(parsed_result.query))
     md[next_field] = make_next_param(base, next_url)
     netloc = current_app.config.get("FORCE_HOST_FOR_REDIRECTS") or parsed_result.netloc
     parsed_result = parsed_result._replace(
-        netloc=netloc, query=url_encode(md, sort=True)
+        netloc=netloc, query=urlencode(sorted(md.items(), key=lambda x: x[0]))
     )
     return urlunparse(parsed_result)
 
@@ -311,15 +315,17 @@ def login_required(func):
     """
 
     @wraps(func)
-    def decorated_view(*args, **kwargs):
+    async def decorated_view(*args, **kwargs):
 
         context = get_context()
 
         if context.method in EXEMPT_METHODS or current_app.config.get("LOGIN_DISABLED"):
             pass
         elif not current_user.is_authenticated:
-            return current_app.login_manager.unauthorized()
+            return await current_app.login_manager.unauthorized()
 
+        if asyncio.iscoroutinefunction(func):
+            return await func(*args, **kwargs)
         return func(*args, **kwargs)
 
     return decorated_view
@@ -351,16 +357,19 @@ def fresh_login_required(func):
     """
 
     @wraps(func)
-    def decorated_view(*args, **kwargs):
+    async def decorated_view(*args, **kwargs):
 
         context = get_context()
 
         if context.method in EXEMPT_METHODS or current_app.config.get("LOGIN_DISABLED"):
             pass
         elif not current_user.is_authenticated:
-            return current_app.login_manager.unauthorized()
+            return await current_app.login_manager.unauthorized()
         elif not login_fresh():
-            return current_app.login_manager.needs_refresh()
+            return await current_app.login_manager.needs_refresh()
+
+        if asyncio.iscoroutinefunction(func):
+            return await func(*args, **kwargs)
         return func(*args, **kwargs)
 
     return decorated_view
@@ -399,13 +408,15 @@ def set_login_view(login_view, blueprint=None):
 
 def _get_user():
     if has_request_context():
-        if not hasattr(_request_ctx_stack.top, "user"):
+        ctx = _cv_request.get()
+        if not hasattr(ctx, "user"):
             current_app.login_manager._load_user()
-        return getattr(_request_ctx_stack.top, "user", None)
+        return getattr(ctx, "user", None)
     elif has_websocket_context():
-        if not hasattr(_websocket_ctx_stack.top, "user"):
+        ctx = _cv_websocket.get()
+        if not hasattr(ctx, "user"):
             current_app.login_manager._load_user()
-        return getattr(_websocket_ctx_stack.top, "user", None)
+        return getattr(ctx, "user", None)
     raise RuntimeError("Attempt to access current_user outside of a relevant context")
 
 
